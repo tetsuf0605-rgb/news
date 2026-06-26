@@ -9,6 +9,14 @@ topics:
       - 浦和レッズ
       - 浦和レッズ 移籍
     exclude_keywords: []
+    priority_sources:
+      - 浦和レッドダイヤモンズ公式サイト
+    source_priority:
+      - 浦和レッドダイヤモンズ公式サイト
+      - Jリーグ
+      - ゲキサカ
+      - Yahoo!ニュース
+      - NHK
     deprioritize_keywords:
       - 元浦和
     deprioritize_sources:
