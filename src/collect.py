@@ -164,6 +164,12 @@ def generate_html(data):
 <head>
   <meta charset=\"UTF-8\">
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+  <link rel=\"apple-touch-icon\" href=\"icon.png\">
+  <link rel=\"manifest\" href=\"manifest.webmanifest\">
+  <meta name=\"apple-mobile-web-app-capable\" content=\"yes\">
+  <meta name=\"apple-mobile-web-app-status-bar-style\" content=\"black\">
+  <meta name=\"apple-mobile-web-app-title\" content=\"レッズニュース\">
+  <meta name=\"theme-color\" content=\"#000000\">
   <title>ニュース一覧</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 40px; }
