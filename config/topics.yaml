@@ -11,3 +11,5 @@ topics:
     exclude_keywords: []
     deprioritize_keywords:
       - 元浦和
+    deprioritize_sources:
+      - Football Tribe

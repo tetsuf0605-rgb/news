@@ -17,7 +17,7 @@ DOCS_JSON_PATH = os.path.join(ROOT_DIR, "docs", "data.json")
 DOCS_HTML_PATH = os.path.join(ROOT_DIR, "docs", "index.html")
 
 RSS_TEMPLATE = "https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
-SIMILARITY_THRESHOLD = 0.35
+SIMILARITY_THRESHOLD = 0.25
 
 
 def load_config(path):
@@ -71,6 +71,11 @@ def entry_matches_exclude(title, excludes):
 def entry_matches_deprioritize(title, keywords):
     title_lower = title.lower()
     return any(keyword.lower() in title_lower for keyword in keywords)
+
+
+def entry_matches_deprioritize_source(source, sources):
+    source_lower = source.lower()
+    return any(source_lower and source_fragment.lower() in source_lower for source_fragment in sources)
 
 
 def parse_published_datetime(published):
@@ -174,7 +179,8 @@ def build_docs(conn, topics):
         topic_config = topic_map.get(topic_id, {})
         topic_name = topic_config.get("name", topic_id)
         deprioritize_keywords = topic_config.get("deprioritize_keywords", []) or []
-        is_deprioritized = entry_matches_deprioritize(title, deprioritize_keywords)
+        deprioritize_sources = topic_config.get("deprioritize_sources", []) or []
+        is_deprioritized = entry_matches_deprioritize(title, deprioritize_keywords) or entry_matches_deprioritize_source(source, deprioritize_sources)
         published_dt = parse_published_datetime(published)
         data.setdefault(topic_name, []).append(
             {
