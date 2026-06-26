@@ -9,3 +9,5 @@ topics:
       - 浦和レッズ
       - 浦和レッズ 移籍
     exclude_keywords: []
+    deprioritize_keywords:
+      - 元浦和

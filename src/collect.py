@@ -1,8 +1,11 @@
+import html
 import json
 import os
+import re
 import sqlite3
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import feedparser
 import yaml
@@ -14,6 +17,7 @@ DOCS_JSON_PATH = os.path.join(ROOT_DIR, "docs", "data.json")
 DOCS_HTML_PATH = os.path.join(ROOT_DIR, "docs", "index.html")
 
 RSS_TEMPLATE = "https://news.google.com/rss/search?q={query}&hl=ja&gl=JP&ceid=JP:ja"
+SIMILARITY_THRESHOLD = 0.35
 
 
 def load_config(path):
@@ -62,6 +66,47 @@ def parse_entry(entry):
 def entry_matches_exclude(title, excludes):
     title_lower = title.lower()
     return any(exclude.lower() in title_lower for exclude in excludes)
+
+
+def entry_matches_deprioritize(title, keywords):
+    title_lower = title.lower()
+    return any(keyword.lower() in title_lower for keyword in keywords)
+
+
+def parse_published_datetime(published):
+    if not published:
+        return None
+    try:
+        parsed = parsedate_to_datetime(published)
+        if parsed is None:
+            return None
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def format_display_date(published):
+    parsed = parse_published_datetime(published)
+    if parsed is None:
+        return "日付不明"
+    return f"{parsed.year}年{parsed.month}月{parsed.day}日"
+
+
+def tokenize_title(title):
+    return [token.lower() for token in re.findall(r"[A-Za-z0-9]+|[一-龠々]+", title) if token]
+
+
+def title_similarity(left, right):
+    tokens_a = set(tokenize_title(left))
+    tokens_b = set(tokenize_title(right))
+    if not tokens_a or not tokens_b:
+        return 0.0
+    common = tokens_a & tokens_b
+    if len(common) < 2:
+        return 0.0
+    return len(common) / len(tokens_a | tokens_b)
 
 
 def fetch_feed(url):
@@ -126,13 +171,21 @@ def build_docs(conn, topics):
     data = {}
 
     for topic_id, title, link, source, published in rows:
-        topic_name = topic_map.get(topic_id, {}).get("name", topic_id)
+        topic_config = topic_map.get(topic_id, {})
+        topic_name = topic_config.get("name", topic_id)
+        deprioritize_keywords = topic_config.get("deprioritize_keywords", []) or []
+        is_deprioritized = entry_matches_deprioritize(title, deprioritize_keywords)
+        published_dt = parse_published_datetime(published)
         data.setdefault(topic_name, []).append(
             {
                 "title": title,
                 "link": link,
                 "source": source,
                 "published": published,
+                "is_deprioritized": is_deprioritized,
+                "published_dt": published_dt.isoformat() if published_dt else None,
+                "published_date_key": published_dt.strftime("%Y-%m-%d") if published_dt else None,
+                "display_date": format_display_date(published),
             }
         )
 
@@ -144,20 +197,65 @@ def build_docs(conn, topics):
         f.write(html)
 
 
+def render_item(item):
+    published = item["published"] or ""
+    source = item["source"] or ""
+    return f"<li><a href=\"{html.escape(item['link'])}\" target=\"_blank\">{html.escape(item['title'])}</a> <small>({html.escape(source)} {html.escape(published)})</small></li>"
+
+
+def render_group(group):
+    if len(group) == 1:
+        return render_item(group[0])
+
+    representative = group[0]
+    other_items = "".join(render_item(item) for item in group[1:])
+    summary = f"{html.escape(representative['title'])} <small>ほか{len(group) - 1}件</small>"
+    return f"<li><details><summary>{summary}</summary><ul>{other_items}</ul></details></li>"
+
+
+def render_groups(items):
+    groups = []
+    for item in items:
+        matched = False
+        for group in groups:
+            representative = group[0]
+            if title_similarity(representative["title"], item["title"]) >= SIMILARITY_THRESHOLD:
+                group.append(item)
+                matched = True
+                break
+        if not matched:
+            groups.append([item])
+    return "".join(render_group(group) for group in groups)
+
+
 def generate_html(data):
     items_html = []
     for topic_name, entries in data.items():
-        rows = []
-        for item in entries:
-            published = item["published"] or ""
-            source = item["source"] or ""
-            rows.append(
-                f"<li><a href=\"{item['link']}\" target=\"_blank\">{item['title']}</a> <small>({source} {published})</small></li>"
-            )
+        if not entries:
+            continue
 
-        items_html.append(
-            f"<section><h2>{topic_name}</h2><ul>{''.join(rows)}</ul></section>"
-        )
+        sorted_entries = sorted(entries, key=lambda item: (item.get("published_dt") or datetime.min), reverse=True)
+        grouped_by_date = {}
+        for item in sorted_entries:
+            date_key = item.get("published_date_key") or "日付不明"
+            grouped_by_date.setdefault(date_key, []).append(item)
+
+        topic_html = [f"<section><h2>{html.escape(topic_name)}</h2>"]
+        for date_key in grouped_by_date:
+            date_items = grouped_by_date[date_key]
+            date_label = date_items[0].get("display_date") or date_key
+            normal_items = [item for item in date_items if not item.get("is_deprioritized", False)]
+            deprioritized_items = [item for item in date_items if item.get("is_deprioritized", False)]
+
+            topic_html.append(f"<h3>{html.escape(date_label)}</h3>")
+            if normal_items:
+                topic_html.append("<ul>" + render_groups(normal_items) + "</ul>")
+            if deprioritized_items:
+                topic_html.append('<p><small>関連性の低い記事</small></p>')
+                topic_html.append("<ul>" + render_groups(deprioritized_items) + "</ul>")
+
+        topic_html.append("</section>")
+        items_html.append("".join(topic_html))
 
     return """<!DOCTYPE html>
 <html lang=\"ja\">
@@ -177,6 +275,8 @@ def generate_html(data):
     section { margin-bottom: 32px; }
     li { margin-bottom: 12px; }
     small { color: #555; }
+    details { margin-bottom: 8px; }
+    summary { cursor: pointer; }
   </style>
 </head>
 <body>
